@@ -10,9 +10,9 @@ module StripeMock
         subscription.merge!(custom_subscription_params(plans, customer, options))
         subscription[:items][:data] = plans.map do |plan|
           if options[:items] && options[:items].size == plans.size
-            quantity = options[:items] &&
-              options[:items].detect { |item| item[:plan] == plan[:id] }[:quantity] || 1
-            Data.mock_subscription_item({ plan: plan, quantity: quantity })
+            opts = options[:items] &&
+              options[:items].detect { |item| item[:plan] == plan[:id] }
+            Data.mock_subscription_item({ plan: plan, quantity: opts[:quantity] || 1, metadata: opts[:metadata] || {} })
           else
             Data.mock_subscription_item({ plan: plan })
           end
@@ -34,7 +34,10 @@ module StripeMock
         # TODO: Implement coupon logic
 
         if (((plan && plan[:trial_period_days]) || 0) == 0 && options[:trial_end].nil?) || options[:trial_end] == "now"
-          end_time = options[:billing_cycle_anchor] || get_ending_time(start_time, plan)
+          anchor = options[:billing_cycle_anchor]
+          anchor = Time.now.utc.to_i if 'now' == anchor
+
+          end_time = anchor || get_ending_time(start_time, plan)
           params.merge!({status: 'active', current_period_end: end_time, trial_start: nil, trial_end: nil, billing_cycle_anchor: options[:billing_cycle_anchor]})
         else
           end_time = options[:trial_end] || (Time.now.utc.to_i + plan[:trial_period_days]*86400)

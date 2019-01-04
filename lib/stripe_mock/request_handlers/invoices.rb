@@ -87,7 +87,10 @@ module StripeMock
           invoice_date = Time.now.to_i
           subscription_plan = assert_existence :plan, subscription_plan_id, plans[subscription_plan_id.to_s]
           preview_subscription = Data.mock_subscription
-          preview_subscription = resolve_subscription_changes(preview_subscription, [subscription_plan], customer, { trial_end: params[:subscription_trial_end] })
+          preview_subscription = resolve_subscription_changes(preview_subscription, [subscription_plan], customer, {
+            trial_end: params[:subscription_trial_end],
+            billing_cycle_anchor: params[:subscription_billing_cycle_anchor]
+          })
           preview_subscription[:id] = subscription[:id]
           preview_subscription[:quantity] = subscription_quantity
           subscription_proration_date = params[:subscription_proration_date] || Time.now
@@ -114,7 +117,7 @@ module StripeMock
           )
 
           preview_plan = assert_existence :plan, params[:subscription_plan], plans[params[:subscription_plan]]
-          if preview_plan[:interval] == subscription[:plan][:interval] && preview_plan[:interval_count] == subscription[:plan][:interval_count] && params[:subscription_trial_end].nil?
+          if preview_plan[:interval] == subscription[:plan][:interval] && preview_plan[:interval_count] == subscription[:plan][:interval_count] && params[:subscription_trial_end].nil? && params[:subscription_billing_cycle_anchor] != 'now'
             remaining_amount = preview_plan[:amount] * subscription_quantity * (subscription[:current_period_end] - subscription_proration_date.to_i) / (subscription[:current_period_end] - subscription[:current_period_start])
             invoice_lines << Data.mock_line_item(
                                      id: new_id('ii'),
