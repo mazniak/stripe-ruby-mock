@@ -326,7 +326,9 @@ module StripeMock
         tax_percent: nil,
         discount: nil,
         metadata: {}
-      }, params)
+      }, params).tap do |sub|
+        sub[:billing_cycle_anchor] ||= sub[:current_period_start]
+      end
     end
 
     def self.mock_invoice(lines, params={})
@@ -378,6 +380,20 @@ module StripeMock
       end
       due = invoice[:total] + invoice[:starting_balance]
       invoice[:amount_due] = due < 0 ? 0 : due
+      if 'upcoming' == in_id
+        invoice[:ending_balance] = [invoice[:total] - invoice[:starting_balance], 0].max
+      end
+      _set_invoice_status(invoice)
+    end
+
+    def self._set_invoice_status(invoice)
+      invoice[:status] = if !invoice[:closed]
+        'draft'
+      elsif invoice[:paid]
+        'paid'
+      else
+        'open'
+      end
       invoice
     end
 

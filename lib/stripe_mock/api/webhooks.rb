@@ -15,11 +15,15 @@ module StripeMock
 
     json = Stripe::Util.symbolize_names(json)
     params = Stripe::Util.symbolize_names(params)
-    json[:account] = params.delete(:account) if params.key?(:account)
-    json[:data][:object] = Util.rmerge(json[:data][:object], params)
-    json.delete(:id)
-    json[:created] = params[:created] || Time.now.to_i
+    if Hash === params[:object]
+      json[:data] = Util.rmerge(json[:data], params)
+    else
+      json[:account] = params.delete(:account) if params.key?(:account)
+      json[:data][:object] = Util.rmerge(json[:data][:object], params)
+      json.delete(:id)
+    end
 
+    json[:created] = params[:created] || Time.now.to_i
     if @state == 'local'
       event_data = instance.generate_webhook_event(json)
     elsif @state == 'remote'

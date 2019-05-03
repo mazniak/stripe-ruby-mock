@@ -7,6 +7,10 @@ module StripeMock
       end
 
       def resolve_subscription_changes(subscription, plans, customer, options = {})
+        if subscription[:plan][:id] != plans[0][:id]
+          options[:current_period_start] = Time.now.utc.to_i
+        end
+
         subscription.merge!(custom_subscription_params(plans, customer, options))
         subscription[:items][:data] = plans.map do |plan|
           if options[:items] && options[:items].size == plans.size
@@ -47,6 +51,56 @@ module StripeMock
         params
       end
 
+      def mock_subscription_invoice(sub, **params)
+        update = params[:subscription_plan] && params[:subscription_plan] != sub[:items][:data][0][:plan][:id]
+        params[:subscription_billing_cycle_anchor] = 'now' if update
+        fake = Stripe::Invoice.upcoming(
+          id: new_id('in'),
+          customer: sub[:customer],
+          subscription: sub[:id],
+          **params
+        )
+        fake.date = Time.now.to_i
+        line = fake.lines.data.detect {|x| x if x.subscription && !x.proration }
+        period = line.period
+
+        fake.lines.data.each do |x|
+          if x.proration
+            x.period.start = sub[:current_period_start]
+            x.period.end = fake.date
+          end
+        end
+
+        if update
+          period.start = sub[:current_period_start] unless line.proration
+          period.end = get_ending_time(period.start, sub[:items][:data][0][:plan])
+        else
+          period.start = sub[:current_period_start]
+          period.end = sub[:current_period_end]
+        end
+        fake.period_start = period.start
+        fake.period_end = period.end
+        fake.paid = true
+        fake.closed = true
+        fake.attempted = true
+        if fake.total < 0
+          cus = customers[sub[:customer]]
+          fake.ending_balance = fake.total.abs + cus[:account_balance]
+          cus[:account_balance] = fake.ending_balance
+        end
+        fake.ending_balance = 0
+        fake.lines.data.each do |line|
+          unless line.proration
+            line.subscription = sub[:id]
+            line.metadata = sub[:metadata]
+            line.subscription_item = sub[:items][:data][0][:id]
+            line.period = period
+          end
+        end
+        fake.status = 'paid'
+        invoices[fake.id] = fake.as_json
+      end
+
       def add_subscription_to_customer(cus, sub)
         if sub[:trial_end].nil? || sub[:trial_end] == "now"
           id = new_id('ch')
@@ -55,6 +109,7 @@ module StripeMock
             :customer => cus[:id],
             :amount => (sub[:plan] ? sub[:plan][:amount] : total_items_amount(sub[:items][:data]))
           )
+
         end
 
         if cus[:currency].nil?

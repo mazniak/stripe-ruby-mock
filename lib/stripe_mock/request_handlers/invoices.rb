@@ -62,12 +62,51 @@ module StripeMock
         raise Stripe::InvalidRequestError.new('When previewing changes to a subscription, you must specify either `subscription` or `subscription_items`', nil, http_status: 400) if !params[:subscription_proration_date].nil? && params[:subscription].nil? && params[:subscription_plan].nil?
         raise Stripe::InvalidRequestError.new('Cannot specify proration date without specifying a subscription', nil, http_status: 400) if !params[:subscription_proration_date].nil? && params[:subscription].nil?
 
+        in_id = params.delete(:id)
         customer = customers[params[:customer]]
         assert_existence :customer, params[:customer], customer
 
-        raise Stripe::InvalidRequestError.new("No upcoming invoices for customer: #{customer[:id]}", nil, http_status: 404) if customer[:subscriptions][:data].length == 0
+        subscription_items = Array(params[:subscription_items])
+        extant_subscription_items = subscription_items.select { |item| item[:id] }
+        new_subscription_items = subscription_items - extant_subscription_items
 
-        subscription =
+        if extant_subscription_items.any? && new_subscription_items.any?
+          raise RuntimeError.new('upcoming_invoice mock does not yet support both updating and creating a subscription item')
+        end
+
+        if customer[:subscriptions][:data].length == 0 && new_subscription_items.empty?
+          raise Stripe::InvalidRequestError.new("No upcoming invoices for customer: #{customer[:id]}", nil, http_status: 404)
+        end
+
+        if new_subscription_items.any?
+          now = DateTime.now
+          subscription = Data.mock_subscription
+          first_item = subscription[:items][:data].first
+          subscription[:items][:data] = new_subscription_items.map do |x|
+            subscription_plan = assert_existence :plan, x[:plan], plans[x[:plan]]
+            first_item.to_h.
+              merge(x).
+              merge(
+                subscription: subscription[:id],
+                plan: subscription_plan.to_h,
+                period: {
+                  start: now.to_i,
+                  end: get_ending_time(now.to_i, subscription_plan)
+                }
+              )
+          end
+
+          item = subscription[:items][:data].first
+          subscription[:plan] = item[:plan]
+          subscription[:current_period_start] = item[:period][:start]
+          subscription[:current_period_end] = item[:period][:end]
+        end
+
+        if extant_subscription_items.any?
+          params[:subscription_plan] = extant_subscription_items.first[:plan]
+        end
+
+        subscription ||=
           if params[:subscription]
             customer[:subscriptions][:data].select{|s|s[:id] == params[:subscription]}.first
           else
@@ -113,7 +152,8 @@ module StripeMock
                                        end: subscription[:current_period_end]
                                    },
                                    quantity: subscription[:quantity],
-                                   proration: true
+                                   proration: true,
+                                   subscription: subscription ? subscription[:id] : nil
           )
 
           preview_plan = assert_existence :plan, params[:subscription_plan], plans[params[:subscription_plan]]
@@ -129,7 +169,8 @@ module StripeMock
                                          end: subscription[:current_period_end]
                                      },
                                      quantity: subscription_quantity,
-                                     proration: true
+                                     proration: true,
+                                     subscription: subscription ? subscription[:id] : nil
             )
           end
         end
@@ -138,7 +179,7 @@ module StripeMock
         invoice_lines << subscription_line
 
         Data.mock_invoice(invoice_lines,
-          id: new_id('in'),
+          id: in_id || 'upcoming',
           customer: customer[:id],
           discount: customer[:discount],
           date: invoice_date,
@@ -154,6 +195,7 @@ module StripeMock
       def get_mock_subscription_line_item(subscription)
         Data.mock_line_item(
           id: subscription[:id],
+          subscription: subscription[:id],
           type: "subscription",
           plan: subscription[:plan],
           amount: subscription[:status] == 'trialing' ? 0 : subscription[:plan][:amount] * subscription[:quantity],
